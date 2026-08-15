@@ -1,0 +1,14 @@
+{
+  "name": "cabo-web",
+  "version": "1.0.0",
+  "description": "Cabo card game - browser app + self-improving agent",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node test_engine.mjs && node test_app.mjs"
+  },
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

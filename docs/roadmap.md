@@ -1,0 +1,19 @@
+# Roadmap
+
+Living document. Checked items are built and verified; the rest is sequenced future work.
+
+- [x] **0. Repo + app scaffold.** `reference/` (untouched originals), `web/` (the shippable PWA), `python/` (the research pipeline), `docs/`.
+- [x] **1. Python rules engine + info-set enumeration.** [`python/cabo_rl/rules.py`](../python/cabo_rl/rules.py) is a faithful port of `engine.ts` (the current, rule-correct implementation — not the stale `cabo.py`), covering deck construction, the multi-discard equality-against-each-other rule, all three power bands, the Cabo lockout, kamikaze, and scoring/reset-at-100. [`python/cabo_rl/enumerate.py`](../python/cabo_rl/enumerate.py) replaced the hand-wavy complexity estimate with real numbers — see [`docs/complexity.md`](complexity.md).
+- [x] **App shell shipped.** `web/` (ported from `reference/cabo-web`, unchanged rules) + a real PWA layer (manifest, icons, service worker) — installable on a phone home screen, works offline. Currently running on the old tabular Q-agent; will be upgraded in place as later steps produce ONNX checkpoints, with no changes to the app shell itself.
+- [ ] **2. Vectorized/batched self-play env** (PyTorch, MPS-accelerated on this machine). Thousands of parallel games per training step — required before any real-scale self-play is feasible. Will reuse `rules.py`'s mechanics as the correctness reference.
+- [ ] **3. State representation.** Belief-distribution vectors per unknown card slot (not scalars), a Deep-Sets/small-MLP encoder over hand + belief contents, a small GRU/transformer over the public action history, plus explicitly-engineered opponent-modeling features (e.g. "spied position *i*, then didn't blind-swap it" — see the project's opponent-modeling design notes). `enumerate.py`'s info-set key is a coarse proxy for this; the real featurization needs to be much richer.
+- [ ] **4. NFSP.** Best-response DQN + average-strategy supervised network, trained via self-play *league* (not one frozen opponent) to avoid non-transitive strategy cycling.
+- [ ] **5. Exploitability evaluation.** Approximate best-response oracle (train an adversary against a frozen candidate policy) for the full game; exact backward induction on the shrunk variant from step 1 to cross-validate the approximate methodology before trusting it at full scale.
+- [ ] **6. Deep CFR** track.
+- [ ] **7. ReBeL** (public-belief-state search). Most engineering-heavy, most SOTA — a stretch goal built on top of a working, evaluated NFSP baseline, not attempted before one exists.
+- [ ] **8. ONNX export + browser parity check.** Compare the exported model's outputs against the PyTorch original on fixed test states before trusting it in the browser.
+- [ ] **9. Wire the exported model into `web/`**, replacing the interim tabular agent; redeploy. The app shell itself doesn't change — only which brain answers `decide_*` calls.
+
+## Why this order
+
+NFSP before Deep CFR before ReBeL: increasing sophistication and engineering cost, decreasing tractability at solo-researcher compute scale. The app (step 0/shell) is deliberately decoupled from the agent's sophistication — it ships once and gets a better brain over time, rather than blocking on the research finishing.
