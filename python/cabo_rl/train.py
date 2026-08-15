@@ -21,7 +21,8 @@ import torch.nn as nn
 
 from cabo_rl import rules as R
 from cabo_rl.agent import NetPolicy
-from cabo_rl.net import CaboNet, HEAD_SIZES
+from cabo_rl.features import Features
+from cabo_rl.net import CaboNet, GLOBAL_HEAD_SIZES, HEAD_SIZES, POSITION_HEADS
 
 # Shrunk-but-structurally-faithful training deck: every value 0-13 still
 # appears (so every power band and kamikaze remain reachable), just 2
@@ -65,7 +66,7 @@ class ReplayBuffer:
     def __init__(self, capacity: int = 30_000):
         self.buffers: dict[str, deque] = {h: deque(maxlen=capacity) for h in HEAD_SIZES}
 
-    def push(self, head: str, features: np.ndarray, action: int, target: float) -> None:
+    def push(self, head: str, features: Features, action: int, target: float) -> None:
         self.buffers[head].append((features, action, target))
 
     def sample(self, head: str, batch_size: int):
@@ -73,10 +74,14 @@ class ReplayBuffer:
         if len(buf) < batch_size:
             return None
         batch = random.sample(buf, batch_size)
-        feats = np.stack([b[0] for b in batch])
+        flat = np.stack([b[0].flat for b in batch])
         actions = np.array([b[1] for b in batch])
         targets = np.array([b[2] for b in batch], dtype=np.float32)
-        return feats, actions, targets
+        if head in GLOBAL_HEAD_SIZES:
+            return flat, None, actions, targets
+        side = POSITION_HEADS[head]
+        position_values = np.stack([(b[0].own_values if side == "own" else b[0].opp_values) for b in batch])
+        return flat, position_values, actions, targets
 
 
 def train(
@@ -114,11 +119,17 @@ def train(
                 batch = buffer.sample(head, batch_size)
                 if batch is None:
                     continue
-                feats, actions, targets = batch
-                feats_t = torch.from_numpy(feats).to(device)
+                flat, position_values, actions, targets = batch
+                flat_t = torch.from_numpy(flat).to(device)
                 actions_t = torch.from_numpy(actions).long().to(device)
                 targets_t = torch.from_numpy(targets).to(device)
-                pred = net(feats_t, head).gather(1, actions_t.unsqueeze(1)).squeeze(1)
+                ctx = net.context(flat_t)
+                if head in GLOBAL_HEAD_SIZES:
+                    out = net.forward_global(ctx, head)
+                else:
+                    pos_t = torch.from_numpy(position_values).to(device)
+                    out = net.forward_position(ctx, head, pos_t)
+                pred = out.gather(1, actions_t.unsqueeze(1)).squeeze(1)
                 loss = nn.functional.mse_loss(pred, targets_t)
                 opt.zero_grad()
                 loss.backward()

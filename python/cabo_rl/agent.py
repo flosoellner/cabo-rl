@@ -1,10 +1,13 @@
 """NetPolicy: a rules.Policy implementation driven by CaboNet. Every
-decision point is a real learned choice (epsilon-greedy over a masked head)
-except "which known-duplicate group to discard, if I have one" - identified
-deterministically (you always know for certain when your own known cards
-match, no judgment call there), leaving only the yes/no "is it worth taking
-right now" as the learned part. Everything else the old agent hard-coded
-(swap target, peek/spy/blind-swap targets) is a full learned head here.
+decision point is a real learned choice (epsilon-greedy, masked to legal
+actions) except "which known-duplicate group to discard, if I have one" -
+identified deterministically (you always know for certain when your own
+known cards match, no judgment call there), leaving only the yes/no "is it
+worth taking right now" as the learned part. Everything else the old agent
+hard-coded (swap target, peek/spy/blind-swap targets) is a full learned
+decision here - "which position" decisions go through CaboNet's shared
+position scorer (see net.py) rather than a plain per-index head, which is
+what fixed a measured position bias in an earlier version.
 
 One NetPolicy instance can play BOTH self-play seats at once (shared
 weights - standard self-play), keeping separate per-seat memory and
@@ -19,8 +22,8 @@ import numpy as np
 import torch
 
 from cabo_rl import rules as R
-from cabo_rl.features import Memory, encode_state
-from cabo_rl.net import CaboNet, HEAD_SIZES
+from cabo_rl.features import Features, Memory, encode_state
+from cabo_rl.net import CaboNet, GLOBAL_HEAD_SIZES, MAX_HAND, POSITION_HEADS
 
 
 def find_best_known_group(hand: list[int], self_known: list[bool]) -> list[int] | None:
@@ -48,14 +51,14 @@ class NetPolicy:
         self.epsilon = 0.2
         self.training = True
         self.memory: dict[R.Who, Memory] = {"human": Memory(), "agent": Memory()}
-        self.trajectory: list[tuple[R.Who, np.ndarray, str, int]] = []
+        self.trajectory: list[tuple[R.Who, Features, str, int]] = []
         self._is_final_turn = False
 
     def reset_round(self) -> None:
         self.memory["human"].reset()
         self.memory["agent"].reset()
 
-    def pop_trajectory(self) -> list[tuple[R.Who, np.ndarray, str, int]]:
+    def pop_trajectory(self) -> list[tuple[R.Who, Features, str, int]]:
         out = self.trajectory
         self.trajectory = []
         return out
@@ -65,16 +68,28 @@ class NetPolicy:
 
     # -- core: encode, mask, epsilon-greedy pick, optionally record --------
 
-    def _features(self, state: R.GameState, who: R.Who) -> np.ndarray:
+    def _features(self, state: R.GameState, who: R.Who) -> Features:
         return encode_state(
             state, who, self.memory[who], self.card_values, self.deck_size, self._is_final_turn
         )
 
+    def _head_logits(self, feats: Features, head: str) -> np.ndarray:
+        ctx = self.net.context(torch.from_numpy(feats.flat).unsqueeze(0).to(self.device))
+        if head in GLOBAL_HEAD_SIZES:
+            out = self.net.forward_global(ctx, head)
+        else:
+            side = POSITION_HEADS[head]
+            block = feats.own_values if side == "own" else feats.opp_values
+            position_values = torch.from_numpy(block).unsqueeze(0).to(self.device)
+            out = self.net.forward_position(ctx, head, position_values)
+        return out.squeeze(0).detach().cpu().numpy()
+
     def _act(self, state: R.GameState, who: R.Who, head: str, valid: list[int]) -> int:
         feats = self._features(state, who)
+        head_size = GLOBAL_HEAD_SIZES.get(head, MAX_HAND)
         with torch.no_grad():
-            logits = self.net(torch.from_numpy(feats).unsqueeze(0).to(self.device), head).squeeze(0).cpu().numpy()
-        mask = np.full(HEAD_SIZES[head], -np.inf, dtype=np.float32)
+            logits = self._head_logits(feats, head)
+        mask = np.full(head_size, -np.inf, dtype=np.float32)
         mask[valid] = logits[valid]
 
         if self.training and random.random() < self.epsilon:

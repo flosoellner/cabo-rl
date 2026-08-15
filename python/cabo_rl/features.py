@@ -97,6 +97,20 @@ def feature_dim() -> int:
     return (MAX_HAND * NUM_VALUES) + MAX_HAND + (MAX_HAND * NUM_VALUES) + MAX_HAND + NUM_VALUES + 1 + 1 + 1
 
 
+@dataclass
+class Features:
+    """Bundles the flattened context vector (for the trunk/global heads)
+    with the raw per-position blocks (for the position-scoring heads) so
+    both can be computed once and reused - see net.py for why position
+    decisions need the raw per-position values, not just the flat vector."""
+
+    flat: np.ndarray
+    own_values: np.ndarray  # (MAX_HAND, NUM_VALUES)
+    own_mask: np.ndarray  # (MAX_HAND,)
+    opp_values: np.ndarray  # (MAX_HAND, NUM_VALUES)
+    opp_mask: np.ndarray  # (MAX_HAND,)
+
+
 def encode_state(
     state: R.GameState,
     who: R.Who,
@@ -104,7 +118,7 @@ def encode_state(
     card_values: list[int],
     deck_size: int,
     is_final_turn: bool,
-) -> np.ndarray:
+) -> Features:
     player = state.players[who]
     opp = state.players[R.other(who)]
     belief = unseen_distribution(state, who, memory, card_values)
@@ -120,7 +134,7 @@ def encode_state(
     discard_size = np.array([len(state.deck.discard_pile) / max(deck_size, 1)], dtype=np.float32)
     final_flag = np.array([1.0 if is_final_turn else 0.0], dtype=np.float32)
 
-    return np.concatenate(
+    flat = np.concatenate(
         [
             own_values.flatten(),
             own_mask,
@@ -132,3 +146,4 @@ def encode_state(
             final_flag,
         ]
     )
+    return Features(flat=flat, own_values=own_values, own_mask=own_mask, opp_values=opp_values, opp_mask=opp_mask)
