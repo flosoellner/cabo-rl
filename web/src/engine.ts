@@ -600,6 +600,66 @@ export function humanPlaceDrawnCard(state: GameState, card: number, positions: n
 }
 
 // ---------------------------------------------------------------------------
+// Generalized (who-agnostic) versions of the above, added for the net-based
+// agent (src/netAgent.ts) - the human_* functions above are hardcoded to
+// state.players.human and stay untouched (still exercised by test_engine.mjs
+// and the click-driven UI). These mirror cabo_rl/rules.py's collapsing of
+// human_*/agent_* into single generic functions.
+// ---------------------------------------------------------------------------
+
+export function placeCardIntoFor(state: GameState, who: Who, card: number, pos: number): void {
+  const player = state.players[who];
+  const oldCard = player.hand[pos];
+  handSet(state, who, pos, card, true);
+  state.deck.discardPile.push(oldCard);
+  logMsg(state, `${who} places it at position ${pos + 1}, discarding its old card (${oldCard}) face-up.`);
+}
+
+export function placeDrawnCardFor(state: GameState, who: Who, card: number, positions: number[]): PlaceDrawnResult {
+  const player = state.players[who];
+  const values = positions.map((p) => player.hand[p]);
+
+  if (positions.length === 1) {
+    placeCardIntoFor(state, who, card, positions[0]);
+    return { success: true, positions, values };
+  }
+
+  const allEqual = values.length > 0 && values.every((v) => v === values[0]);
+  if (allEqual && positions.length >= 2) {
+    const sorted = [...positions].sort((a, b) => b - a);
+    for (const idx of sorted) {
+      const discardedVal = handPop(state, who, idx);
+      state.deck.discardPile.push(discardedVal);
+    }
+    handAppend(state, who, card, true);
+    logMsg(state, `Success! ${who} discarded ${positions.length} matching ${values[0]}s and placed the drawn ${card} instead.`);
+    return { success: true, positions, values };
+  }
+
+  state.deck.discardPile.push(card);
+  logMsg(state, `Failed swap! Those cards were actually ${values.join(", ")} - not all equal. The drawn card is discarded.`);
+  return { success: false, positions, values };
+}
+
+// No value in the log message here (unlike humanUsePeekOwn) - the only
+// caller is the net agent peeking at its OWN card, and the whole point is
+// that value stays hidden from the human. The caller logs its own
+// "(value hidden from you)" message.
+export function usePeekOwnFor(state: GameState, who: Who, pos: number): number {
+  const player = state.players[who];
+  const val = player.hand[pos];
+  player.selfKnown[pos] = true;
+  return val;
+}
+
+export function useSpyOppFor(state: GameState, who: Who, pos: number): number {
+  const opp = who === "human" ? state.players.agent : state.players.human;
+  const val = opp.hand[pos];
+  if (who === "agent") state.agentBrain.oppKnown[pos] = true;
+  return val;
+}
+
+// ---------------------------------------------------------------------------
 // Round flow / scoring
 // ---------------------------------------------------------------------------
 

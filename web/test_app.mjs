@@ -1,11 +1,42 @@
 import assert from "node:assert/strict";
 import * as app from "./dist/app.js";
+import * as E from "./dist/engine.js";
 
 let renderCount = 0;
 app.setRenderer(() => {
   renderCount++;
 });
-app.setScheduler((fn) => fn());
+
+// The agent's real turn logic now runs a browser-only ONNX model - not
+// available under plain Node, and not what these tests are actually
+// checking anyway (that's covered by the Python test suite instead). This
+// mock is a minimal, fast, legal turn: exercises the state machine
+// (Cabo lockout, round transitions, ...) without needing a real model.
+async function mockAgentTurn(state, isFinalTurn) {
+  if (!isFinalTurn && Math.random() < 0.05) return true; // occasionally call cabo
+  const card = state.deck.drawPile.length > 0 ? state.deck.drawPile.pop() : E.deckDraw(state);
+  E.placeDrawnCardFor(state, "agent", card, [0]); // plain swap, always legal
+  return false;
+}
+app.setAgentTurnRunner(mockAgentTurn);
+
+// runAgentTurn is async now (real inference is Promise-based) - the
+// scheduler hook only gets a plain callback, so it can't be awaited
+// directly by callers like onCallCabo(). Capture the promise it returns
+// instead, and let tests explicitly wait for it via settleAgent() before
+// checking state that depends on the agent's turn having finished.
+let pendingAgentTurn = null;
+function defaultScheduler(fn) {
+  pendingAgentTurn = fn();
+}
+async function settleAgent() {
+  if (pendingAgentTurn) {
+    const p = pendingAgentTurn;
+    pendingAgentTurn = null;
+    await p;
+  }
+}
+app.setScheduler(defaultScheduler);
 app.setRoundTransitionScheduler((fn) => fn()); // auto-continue immediately in tests too
 
 // -------------------------------------------------------------------------
@@ -33,6 +64,7 @@ app.setRoundTransitionScheduler((fn) => fn()); // auto-continue immediately in t
   app.ui.phase = "choose_action";
 
   app.onCallCabo();
+  await settleAgent(); // the agent's mandatory final turn is now async - wait for it
   assert.equal(app.flow.caboCaller, "human");
   assert.equal(app.flow.isFinalTurn, true);
   assert.ok(["round_over", "game_over"].includes(app.ui.phase), `expected round to resolve, got ${app.ui.phase}`);
@@ -73,7 +105,7 @@ function withDeferredAgent(fn) {
   try {
     fn();
   } finally {
-    app.setScheduler((cb) => cb()); // restore synchronous default
+    app.setScheduler(defaultScheduler); // restore the (awaitable) default
   }
 }
 
@@ -188,7 +220,10 @@ withDeferredAgent(() => {
       app.onContinueAfterRound(); // the explicit click - no timer does this anymore
       continue;
     }
-    if (app.flow.current !== "human") break; // shouldn't happen with sync scheduler
+    if (app.flow.current !== "human") {
+      await settleAgent(); // the agent's turn was scheduled - wait for it to actually finish
+      continue;
+    }
     switch (app.ui.phase) {
       case "choose_action": {
         const r = Math.random();

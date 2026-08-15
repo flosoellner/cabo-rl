@@ -1,6 +1,39 @@
 import * as E from "./engine.js";
-import { loadBrain, saveBrain } from "./storage.js";
+import * as netAgent from "./netAgent.js";
 import type { GameState, Who, PowerKind } from "./engine.js";
+
+// The agent's "brain" is now a frozen, pretrained ONNX checkpoint shared by
+// everyone - not a per-browser Q-table that learns from your play, so
+// there's nothing left to load/save via localStorage (storage.ts still
+// exists and still works, just nothing currently calls it - a native port
+// swapping it out remains a one-file change if that ever changes again).
+// Fetched relative to wherever the app is actually served (works both at
+// the GitHub Pages subpath and locally).
+const MODEL_URL = new URL("../public/models/cabo_net.onnx", import.meta.url).href;
+
+// How the agent's turn actually gets decided - pluggable so tests (plain
+// Node, no WASM/fetch/browser environment) can swap in a trivial mock
+// instead of needing a real ONNX runtime just to exercise the state
+// machine. This is exactly the same "swap one piece, not the whole app"
+// pattern as setScheduler/setRoundTransitionScheduler.
+export type AgentTurnRunner = (state: GameState, isFinalTurn: boolean) => Promise<boolean>;
+
+let runAgentTurnImpl: AgentTurnRunner = async (s, isFinalTurn) => {
+  const session = await netAgent.loadModel(MODEL_URL);
+  return netAgent.runNetAgentTurn(session, s, E.CARD_VALUES.length, isFinalTurn);
+};
+
+export function setAgentTurnRunner(fn: AgentTurnRunner): void {
+  runAgentTurnImpl = fn;
+}
+
+// Browser entry point (main.ts) calls this once at startup to start the
+// model fetch/compile early, in parallel with the human's first turn -
+// harmless to skip (it lazy-loads on first real use regardless), just
+// saves a beat of latency on the agent's actual first move.
+export function preloadAgentModel(): void {
+  netAgent.loadModel(MODEL_URL);
+}
 
 // ---------------------------------------------------------------------------
 // UI state
@@ -40,7 +73,7 @@ interface UIState {
   revealedHands: Record<Who, number[]> | null;
 }
 
-export let state: GameState = E.newGameState(loadBrain());
+export let state: GameState = E.newGameState(E.newAgentBrain());
 export let flow: FlowState = { current: "human", caboCaller: null, isFinalTurn: false, startingPlayerThisRound: "human" };
 export let ui: UIState = {
   phase: "choose_action",
@@ -82,7 +115,7 @@ export function setRoundTransitionScheduler(fn: (cb: () => void) => void): void 
 // ---------------------------------------------------------------------------
 
 export function startNewGame(): void {
-  state = E.newGameState(loadBrain());
+  state = E.newGameState(E.newAgentBrain());
   const startingPlayer: Who = Math.random() < 0.5 ? "human" : "agent";
   startRound(startingPlayer);
 }
@@ -118,8 +151,6 @@ function endRound(): void {
   };
   const roundPoints = E.resolveRound(state, flow.caboCaller);
   const winner = E.applyRoundScores(state, roundPoints);
-  E.agentLearn(state, roundPoints.human - roundPoints.agent);
-  saveBrain(state.agentBrain);
   const nextStarter = E.determineNextStarter(roundPoints, flow.caboCaller, flow.startingPlayerThisRound);
   ui.phase = winner ? "game_over" : "round_over";
   ui.roundPoints = roundPoints;
@@ -138,8 +169,8 @@ export function onContinueAfterRound(): void {
   scheduleRoundTransition(() => startRound(ui.nextStarter!));
 }
 
-function runAgentTurn(): void {
-  const calledCabo = E.agentTurn(state, flow.isFinalTurn);
+async function runAgentTurn(): Promise<void> {
+  const calledCabo = await runAgentTurnImpl(state, flow.isFinalTurn);
   if (calledCabo) {
     flow.caboCaller = "agent";
     flow.isFinalTurn = true;

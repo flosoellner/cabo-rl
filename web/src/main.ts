@@ -234,4 +234,5 @@ app.setScheduler((fn) => setTimeout(fn, 550));
 // No delay here anymore - the round-over screen itself is the pause now
 // (it waits for a "continue" click), so there's nothing left to debounce.
 app.setRoundTransitionScheduler((fn) => fn());
+app.preloadAgentModel(); // start fetching/compiling the ONNX model now, in parallel with the human's first turn
 app.startNewGame();

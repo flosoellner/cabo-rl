@@ -10,5 +10,8 @@
   "license": "ISC",
   "devDependencies": {
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.27.0"
   }
 }

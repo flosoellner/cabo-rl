@@ -27,22 +27,34 @@ from cabo_rl.net import CaboNet, GLOBAL_HEAD_SIZES, HEAD_SIZES, POSITION_HEADS
 # Shrunk-but-structurally-faithful training deck: every value 0-13 still
 # appears (so every power band and kamikaze remain reachable), just 2
 # copies each instead of the real game's 2-4 - roughly half the cards.
+# Used to validate the approach fast; REAL_CARD_VALUES (the actual 52-card
+# deck, same 0-13 range but real multiplicities) is what actually ships.
 TRAIN_CARD_VALUES = [v for v in range(14) for _ in range(2)]
 TRAIN_HAND_SIZE = 4
 DECK_SIZE = len(TRAIN_CARD_VALUES)
+
+REAL_CARD_VALUES = R.CARD_VALUES
+REAL_HAND_SIZE = 4
+REAL_DECK_SIZE = len(REAL_CARD_VALUES)
 
 
 def reward_for(round_points: dict[R.Who, int], who: R.Who) -> float:
     return float(round_points[R.other(who)] - round_points[who])
 
 
-def play_training_round(net_policy: NetPolicy, rng: random.Random, starting: R.Who) -> dict[R.Who, int]:
+def play_training_round(
+    net_policy: NetPolicy,
+    rng: random.Random,
+    starting: R.Who,
+    hand_size: int = TRAIN_HAND_SIZE,
+    card_values: list[int] = TRAIN_CARD_VALUES,
+) -> dict[R.Who, int]:
     """Mirrors rules.play_round's loop, but also tells net_policy when a
     turn is the post-Cabo mandatory final turn (context the network should
     see, and rules.Policy has no generic hook for)."""
     state = R.GameState(deck=R.Deck(), players={"human": R.new_player("You"), "agent": R.new_player("Agent")})
     net_policy.reset_round()
-    R.deal_new_round(state, rng, hand_size=TRAIN_HAND_SIZE, card_values=TRAIN_CARD_VALUES)
+    R.deal_new_round(state, rng, hand_size=hand_size, card_values=card_values)
 
     current = starting
     cabo_caller: R.Who | None = None
@@ -93,23 +105,27 @@ def train(
     eps_end: float = 0.03,
     seed: int = 0,
     log_every: int = 2000,
+    hand_size: int = TRAIN_HAND_SIZE,
+    card_values: list[int] = TRAIN_CARD_VALUES,
+    deck_size: int | None = None,
 ) -> CaboNet:
     # MPS exists but loses to plain CPU here (measured: ~5.3s vs ~8.8s for
     # 1000 episodes) - the network and batches are tiny, so per-op GPU
     # dispatch overhead dominates any real compute win. Worth revisiting
     # once the network/batch sizes grow (e.g. a history transformer).
     device = "cpu"
+    deck_size = deck_size if deck_size is not None else len(card_values)
     net = CaboNet().to(device)
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     buffer = ReplayBuffer()
-    policy = NetPolicy(net, TRAIN_CARD_VALUES, DECK_SIZE, device=device)
+    policy = NetPolicy(net, card_values, deck_size, device=device)
     rng = random.Random(seed)
 
     t0 = time.time()
     for ep in range(1, episodes + 1):
         policy.epsilon = eps_start + (eps_end - eps_start) * (ep / episodes)
         starting: R.Who = "human" if ep % 2 == 0 else "agent"
-        round_points = play_training_round(policy, rng, starting)
+        round_points = play_training_round(policy, rng, starting, hand_size=hand_size, card_values=card_values)
 
         for who, feats, head, action in policy.pop_trajectory():
             buffer.push(head, feats, action, reward_for(round_points, who))
@@ -148,9 +164,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--episodes", type=int, default=20_000)
     parser.add_argument("--out", type=str, default="checkpoints/cabo_net.pt")
+    parser.add_argument("--deck", choices=["shrunk", "real"], default="shrunk")
     args = parser.parse_args()
 
-    trained = train(episodes=args.episodes)
+    if args.deck == "real":
+        trained = train(episodes=args.episodes, hand_size=REAL_HAND_SIZE, card_values=REAL_CARD_VALUES, deck_size=REAL_DECK_SIZE)
+    else:
+        trained = train(episodes=args.episodes)
     import os
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)

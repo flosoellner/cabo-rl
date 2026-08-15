@@ -14,7 +14,14 @@ import torch
 from cabo_rl import rules as R
 from cabo_rl.agent import NetPolicy
 from cabo_rl.net import CaboNet
-from cabo_rl.train import DECK_SIZE, TRAIN_CARD_VALUES, TRAIN_HAND_SIZE
+from cabo_rl.train import (
+    DECK_SIZE,
+    REAL_CARD_VALUES,
+    REAL_DECK_SIZE,
+    REAL_HAND_SIZE,
+    TRAIN_CARD_VALUES,
+    TRAIN_HAND_SIZE,
+)
 
 
 def ask(prompt: str, valid_choices: list[str]) -> str:
@@ -96,10 +103,17 @@ class HumanCliPolicy:
         return hpos, apos
 
 
-def play_one_round(net_policy: NetPolicy, human_policy: HumanCliPolicy, rng: random.Random, starting: R.Who) -> dict[R.Who, int]:
+def play_one_round(
+    net_policy: NetPolicy,
+    human_policy: HumanCliPolicy,
+    rng: random.Random,
+    starting: R.Who,
+    hand_size: int,
+    card_values: list[int],
+) -> dict[R.Who, int]:
     state = R.GameState(deck=R.Deck(), players={"human": R.new_player("You"), "agent": R.new_player("Agent")})
     net_policy.reset_round()
-    R.deal_new_round(state, rng, hand_size=TRAIN_HAND_SIZE, card_values=TRAIN_CARD_VALUES)
+    R.deal_new_round(state, rng, hand_size=hand_size, card_values=card_values)
     print(f"\n{'=' * 60}\n{state.log[-2]}\n{state.log[-1]}")
     seen_log = len(state.log)
 
@@ -139,24 +153,32 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, default="checkpoints/cabo_net.pt")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--deck", choices=["shrunk", "real"], default="shrunk")
     args = parser.parse_args()
+
+    if args.deck == "real":
+        hand_size, card_values, deck_size = REAL_HAND_SIZE, REAL_CARD_VALUES, REAL_DECK_SIZE
+    else:
+        hand_size, card_values, deck_size = TRAIN_HAND_SIZE, TRAIN_CARD_VALUES, DECK_SIZE
 
     net = CaboNet()
     net.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
     net.eval()
-    net_policy = NetPolicy(net, TRAIN_CARD_VALUES, DECK_SIZE, device="cpu")
+    net_policy = NetPolicy(net, card_values, deck_size, device="cpu")
     net_policy.training = False
     net_policy.epsilon = 0.0
     human_policy = HumanCliPolicy()
     rng = random.Random(args.seed)
 
-    print("Cabo vs. the trained agent - shrunk single-round training variant (values 0-13, 2 copies each, 4-card hands).")
-    print("This is NOT the real 52-card game yet - it's the small variant the net was actually trained on.")
+    if args.deck == "real":
+        print("Cabo vs. the trained agent - real 52-card deck, single round, 4-card hands.")
+    else:
+        print("Cabo vs. the trained agent - shrunk single-round training variant (values 0-13, 2 copies each, 4-card hands).")
 
     session = {"human": 0, "agent": 0, "ties": 0}
     starting: R.Who = "human"
     while True:
-        points = play_one_round(net_policy, human_policy, rng, starting)
+        points = play_one_round(net_policy, human_policy, rng, starting, hand_size, card_values)
         if points["human"] < points["agent"]:
             session["human"] += 1
         elif points["human"] > points["agent"]:

@@ -92,9 +92,10 @@ def _encode_hand(
 
 
 def feature_dim() -> int:
-    # own values + own mask + opp values + opp mask + discard top + draw
-    # pile size + discard pile size + is_final_turn
-    return (MAX_HAND * NUM_VALUES) + MAX_HAND + (MAX_HAND * NUM_VALUES) + MAX_HAND + NUM_VALUES + 1 + 1 + 1
+    # own values + own mask + opp values + opp mask + discard top + drawn
+    # card (pending, one-hot or zero if N/A) + draw pile size + discard
+    # pile size + is_final_turn
+    return (MAX_HAND * NUM_VALUES) + MAX_HAND + (MAX_HAND * NUM_VALUES) + MAX_HAND + NUM_VALUES + NUM_VALUES + 1 + 1 + 1
 
 
 @dataclass
@@ -118,7 +119,18 @@ def encode_state(
     card_values: list[int],
     deck_size: int,
     is_final_turn: bool,
+    drawn_card: int | None = None,
 ) -> Features:
+    """`drawn_card`: the value of the card currently pending a decision
+    (e.g. "place vs discard for power", "which position does it fill") -
+    None when no card is pending yet (decide_cabo, decide_draw_source).
+    This is NOT optional in spirit - decisions that need to judge a
+    specific card's value cannot be made sensibly without it. An earlier
+    version silently omitted this entirely (accepted `card` as a parameter
+    in the calling Policy methods but never threaded it into the features),
+    so e.g. "which position should this card replace" was being decided
+    with no idea what the card even was - only caught via manual review,
+    not by any test, since a fixed-value smoke probe happened to hide it."""
     player = state.players[who]
     opp = state.players[R.other(who)]
     belief = unseen_distribution(state, who, memory, card_values)
@@ -130,6 +142,7 @@ def encode_state(
     discard_top = (
         _one_hot(state.deck.discard_pile[-1]) if state.deck.discard_pile else np.zeros(NUM_VALUES, dtype=np.float32)
     )
+    drawn_enc = _one_hot(drawn_card) if drawn_card is not None else np.zeros(NUM_VALUES, dtype=np.float32)
     draw_size = np.array([len(state.deck.draw_pile) / max(deck_size, 1)], dtype=np.float32)
     discard_size = np.array([len(state.deck.discard_pile) / max(deck_size, 1)], dtype=np.float32)
     final_flag = np.array([1.0 if is_final_turn else 0.0], dtype=np.float32)
@@ -141,6 +154,7 @@ def encode_state(
             opp_values.flatten(),
             opp_mask,
             discard_top,
+            drawn_enc,
             draw_size,
             discard_size,
             final_flag,

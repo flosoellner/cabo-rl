@@ -1,6 +1,28 @@
 import * as E from "./engine.js";
-import { loadBrain, saveBrain } from "./storage.js";
-export let state = E.newGameState(loadBrain());
+import * as netAgent from "./netAgent.js";
+// The agent's "brain" is now a frozen, pretrained ONNX checkpoint shared by
+// everyone - not a per-browser Q-table that learns from your play, so
+// there's nothing left to load/save via localStorage (storage.ts still
+// exists and still works, just nothing currently calls it - a native port
+// swapping it out remains a one-file change if that ever changes again).
+// Fetched relative to wherever the app is actually served (works both at
+// the GitHub Pages subpath and locally).
+const MODEL_URL = new URL("../public/models/cabo_net.onnx", import.meta.url).href;
+let runAgentTurnImpl = async (s, isFinalTurn) => {
+    const session = await netAgent.loadModel(MODEL_URL);
+    return netAgent.runNetAgentTurn(session, s, E.CARD_VALUES.length, isFinalTurn);
+};
+export function setAgentTurnRunner(fn) {
+    runAgentTurnImpl = fn;
+}
+// Browser entry point (main.ts) calls this once at startup to start the
+// model fetch/compile early, in parallel with the human's first turn -
+// harmless to skip (it lazy-loads on first real use regardless), just
+// saves a beat of latency on the agent's actual first move.
+export function preloadAgentModel() {
+    netAgent.loadModel(MODEL_URL);
+}
+export let state = E.newGameState(E.newAgentBrain());
 export let flow = { current: "human", caboCaller: null, isFinalTurn: false, startingPlayerThisRound: "human" };
 export let ui = {
     phase: "choose_action",
@@ -37,7 +59,7 @@ export function setRoundTransitionScheduler(fn) {
 // Game / round lifecycle
 // ---------------------------------------------------------------------------
 export function startNewGame() {
-    state = E.newGameState(loadBrain());
+    state = E.newGameState(E.newAgentBrain());
     const startingPlayer = Math.random() < 0.5 ? "human" : "agent";
     startRound(startingPlayer);
 }
@@ -71,8 +93,6 @@ function endRound() {
     };
     const roundPoints = E.resolveRound(state, flow.caboCaller);
     const winner = E.applyRoundScores(state, roundPoints);
-    E.agentLearn(state, roundPoints.human - roundPoints.agent);
-    saveBrain(state.agentBrain);
     const nextStarter = E.determineNextStarter(roundPoints, flow.caboCaller, flow.startingPlayerThisRound);
     ui.phase = winner ? "game_over" : "round_over";
     ui.roundPoints = roundPoints;
@@ -90,8 +110,8 @@ export function onContinueAfterRound() {
         return;
     scheduleRoundTransition(() => startRound(ui.nextStarter));
 }
-function runAgentTurn() {
-    const calledCabo = E.agentTurn(state, flow.isFinalTurn);
+async function runAgentTurn() {
+    const calledCabo = await runAgentTurnImpl(state, flow.isFinalTurn);
     if (calledCabo) {
         flow.caboCaller = "agent";
         flow.isFinalTurn = true;

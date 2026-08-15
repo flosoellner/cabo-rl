@@ -68,9 +68,9 @@ class NetPolicy:
 
     # -- core: encode, mask, epsilon-greedy pick, optionally record --------
 
-    def _features(self, state: R.GameState, who: R.Who) -> Features:
+    def _features(self, state: R.GameState, who: R.Who, drawn_card: int | None = None) -> Features:
         return encode_state(
-            state, who, self.memory[who], self.card_values, self.deck_size, self._is_final_turn
+            state, who, self.memory[who], self.card_values, self.deck_size, self._is_final_turn, drawn_card
         )
 
     def _head_logits(self, feats: Features, head: str) -> np.ndarray:
@@ -84,8 +84,8 @@ class NetPolicy:
             out = self.net.forward_position(ctx, head, position_values)
         return out.squeeze(0).detach().cpu().numpy()
 
-    def _act(self, state: R.GameState, who: R.Who, head: str, valid: list[int]) -> int:
-        feats = self._features(state, who)
+    def _act(self, state: R.GameState, who: R.Who, head: str, valid: list[int], drawn_card: int | None = None) -> int:
+        feats = self._features(state, who, drawn_card)
         head_size = GLOBAL_HEAD_SIZES.get(head, MAX_HAND)
         with torch.no_grad():
             logits = self._head_logits(feats, head)
@@ -110,16 +110,16 @@ class NetPolicy:
         return "discard" if self._act(state, who, "draw_source", [0, 1]) == 1 else "pile"
 
     def decide_place_or_discard(self, state: R.GameState, who: R.Who, card: int) -> Literal["place", "discard"]:
-        return "discard" if self._act(state, who, "place_or_discard", [0, 1]) == 1 else "place"
+        return "discard" if self._act(state, who, "place_or_discard", [0, 1], drawn_card=card) == 1 else "place"
 
     def choose_discard_positions(self, state: R.GameState, who: R.Who, card: int) -> list[int]:
         player = state.players[who]
         group = find_best_known_group(player.hand, player.self_known)
         if group is not None:
-            if self._act(state, who, "use_group_discard", [0, 1]) == 1:
+            if self._act(state, who, "use_group_discard", [0, 1], drawn_card=card) == 1:
                 return group
         hand_len = len(player.hand)
-        pos = self._act(state, who, "swap_target", list(range(hand_len)))
+        pos = self._act(state, who, "swap_target", list(range(hand_len)), drawn_card=card)
         return [pos]
 
     def choose_peek_position(self, state: R.GameState, who: R.Who) -> int:
