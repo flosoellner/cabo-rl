@@ -100,7 +100,7 @@ def play_one_round(net_policy: NetPolicy, human_policy: HumanCliPolicy, rng: ran
     state = R.GameState(deck=R.Deck(), players={"human": R.new_player("You"), "agent": R.new_player("Agent")})
     net_policy.reset_round()
     R.deal_new_round(state, rng, hand_size=TRAIN_HAND_SIZE, card_values=TRAIN_CARD_VALUES)
-    print(f"\n{'=' * 60}\nNew round. {state.log[-2]}\n{state.log[-1]}")
+    print(f"\n{'=' * 60}\n{state.log[-2]}\n{state.log[-1]}")
     seen_log = len(state.log)
 
     policies = {"human": human_policy, "agent": net_policy}
