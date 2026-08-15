@@ -98,8 +98,8 @@ def new_player(name: str) -> Player:
     return Player(name=name)
 
 
-def new_deck(rng: random.Random) -> Deck:
-    draw_pile = CARD_VALUES.copy()
+def new_deck(rng: random.Random, card_values: list[int] = CARD_VALUES) -> Deck:
+    draw_pile = list(card_values)
     rng.shuffle(draw_pile)
     return Deck(draw_pile=draw_pile, discard_pile=[])
 
@@ -353,13 +353,24 @@ def take_turn(state: GameState, rng: random.Random, who: Who, policy: Policy, fi
     return False
 
 
-def deal_new_round(state: GameState, rng: random.Random) -> None:
-    state.deck = new_deck(rng)
+def deal_new_round(
+    state: GameState,
+    rng: random.Random,
+    hand_size: int = 4,
+    card_values: list[int] = CARD_VALUES,
+) -> None:
+    """`hand_size`/`card_values` default to the real game (4 cards, full 52-
+    card deck) - overriding them plays a smaller variant with the exact same
+    rules, used to train/evaluate a learning agent faster before scaling up.
+    Mirrors the real rule of only knowing your first 2 cards, generalized as
+    "first min(2, hand_size) known" for hand sizes other than 4."""
+    state.deck = new_deck(rng, card_values)
+    known_prefix = min(2, hand_size)
     for who in WHOS:
         p = state.players[who]
-        p.hand = [state.deck.draw_pile.pop() for _ in range(4)]
-        p.self_known = [True, True, False, False]
-    state.opp_known = [False, False, False, False]
+        p.hand = [state.deck.draw_pile.pop() for _ in range(hand_size)]
+        p.self_known = [True] * known_prefix + [False] * (hand_size - known_prefix)
+    state.opp_known = [False] * hand_size
     top = state.deck.draw_pile.pop()
     state.deck.discard_pile.append(top)
     state.log = []

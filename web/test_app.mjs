@@ -164,24 +164,30 @@ withDeferredAgent(() => {
 });
 
 // -------------------------------------------------------------------------
-// 3) Rounds auto-continue with no "play again?" prompt until someone wins.
+// 3) The match runs to completion with no "play again?" confirmation
+//    prompt - but each round-over screen now *does* require an explicit
+//    "continue" click before the next round deals (fixed after user
+//    feedback: the old fully-automatic transition made round results
+//    impossible to actually read before they vanished).
 // -------------------------------------------------------------------------
 {
   app.startNewGame();
   let guard = 0;
-  let roundsSeen = 0;
   let sawGameOver = false;
-  let lastPhase = null;
+  let sawRoundOver = false;
 
   while (guard++ < 4000) {
     if (app.ui.phase === "game_over") {
       sawGameOver = true;
       break;
     }
-    if (app.ui.phase !== lastPhase && app.ui.phase === "choose_action" && app.flow.startingPlayerThisRound) {
-      // heuristically counts a "new round" boundary; not load-bearing, just informational
+    if (app.ui.phase === "round_over") {
+      sawRoundOver = true;
+      assert.ok(app.ui.revealedHands, "round_over must carry a snapshot of both final hands");
+      assert.ok(app.ui.revealedHands.human.length > 0 && app.ui.revealedHands.agent.length > 0);
+      app.onContinueAfterRound(); // the explicit click - no timer does this anymore
+      continue;
     }
-    lastPhase = app.ui.phase;
     if (app.flow.current !== "human") break; // shouldn't happen with sync scheduler
     switch (app.ui.phase) {
       case "choose_action": {
@@ -203,12 +209,9 @@ withDeferredAgent(() => {
     }
   }
 
-  assert.ok(sawGameOver, "expected the match to reach game_over via auto-continuing rounds");
-  // Crucially: at no point should the state machine have entered a phase
-  // that requires a manual "continue" click - round_over is transient
-  // (scheduleRoundTransition fires synchronously in this test) so it
-  // should never be the LAST phase before game_over is reached this way.
-  console.log(`auto-continue rounds: reached game_over after ${guard} steps, no manual continue click used: OK`);
+  assert.ok(sawGameOver, "expected the match to reach game_over via repeated rounds");
+  assert.ok(sawRoundOver, "expected at least one round_over screen requiring a continue click along the way");
+  console.log(`match completion via explicit continue clicks: reached game_over after ${guard} steps: OK`);
 }
 
 console.log("\nALL APP ORCHESTRATION TESTS PASSED");

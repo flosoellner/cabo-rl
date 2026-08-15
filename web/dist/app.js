@@ -11,6 +11,7 @@ export let ui = {
     roundPoints: null,
     winner: null,
     nextStarter: null,
+    revealedHands: null,
 };
 // render() is overridden by main.ts in the browser. Left as a no-op here so
 // the orchestration logic below can be exercised directly under Node for
@@ -52,6 +53,7 @@ export function startRound(startingPlayer) {
         roundPoints: null,
         winner: null,
         nextStarter: null,
+        revealedHands: null,
     };
     render();
     if (startingPlayer === "agent") {
@@ -59,6 +61,14 @@ export function startRound(startingPlayer) {
     }
 }
 function endRound() {
+    // Snapshot both hands before anything else touches them - the next
+    // round's deal will overwrite state.players.*.hand, but the round-over
+    // screen needs to keep showing what was actually revealed until the
+    // player is done looking at it.
+    const revealedHands = {
+        human: [...state.players.human.hand],
+        agent: [...state.players.agent.hand],
+    };
     const roundPoints = E.resolveRound(state, flow.caboCaller);
     const winner = E.applyRoundScores(state, roundPoints);
     E.agentLearn(state, roundPoints.human - roundPoints.agent);
@@ -68,11 +78,17 @@ function endRound() {
     ui.roundPoints = roundPoints;
     ui.winner = winner;
     ui.nextStarter = nextStarter;
+    ui.revealedHands = revealedHands;
     render();
-    if (!winner) {
-        // The match just keeps going - no "play another round?" prompt.
-        scheduleRoundTransition(() => startRound(nextStarter));
-    }
+    // No auto-advance timer - round_over now waits for an explicit click
+    // (onContinueAfterRound) so results are never yanked away before you've
+    // seen them. The match still never asks "play another round?" once
+    // you've clicked past this - it only gates the reveal itself.
+}
+export function onContinueAfterRound() {
+    if (ui.phase !== "round_over" || ui.nextStarter === null)
+        return;
+    scheduleRoundTransition(() => startRound(ui.nextStarter));
 }
 function runAgentTurn() {
     const calledCabo = E.agentTurn(state, flow.isFinalTurn);

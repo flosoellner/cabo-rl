@@ -34,6 +34,10 @@ interface UIState {
   roundPoints: Record<Who, number> | null;
   winner: Who | null;
   nextStarter: Who | null;
+  // Snapshot of both hands at the moment a round ends, taken before the
+  // next round's deal overwrites them - so the round-over screen has
+  // something real to show, not just the point delta.
+  revealedHands: Record<Who, number[]> | null;
 }
 
 export let state: GameState = E.newGameState(loadBrain());
@@ -47,6 +51,7 @@ export let ui: UIState = {
   roundPoints: null,
   winner: null,
   nextStarter: null,
+  revealedHands: null,
 };
 
 // render() is overridden by main.ts in the browser. Left as a no-op here so
@@ -94,6 +99,7 @@ export function startRound(startingPlayer: Who): void {
     roundPoints: null,
     winner: null,
     nextStarter: null,
+    revealedHands: null,
   };
   render();
   if (startingPlayer === "agent") {
@@ -102,6 +108,14 @@ export function startRound(startingPlayer: Who): void {
 }
 
 function endRound(): void {
+  // Snapshot both hands before anything else touches them - the next
+  // round's deal will overwrite state.players.*.hand, but the round-over
+  // screen needs to keep showing what was actually revealed until the
+  // player is done looking at it.
+  const revealedHands: Record<Who, number[]> = {
+    human: [...state.players.human.hand],
+    agent: [...state.players.agent.hand],
+  };
   const roundPoints = E.resolveRound(state, flow.caboCaller);
   const winner = E.applyRoundScores(state, roundPoints);
   E.agentLearn(state, roundPoints.human - roundPoints.agent);
@@ -111,11 +125,17 @@ function endRound(): void {
   ui.roundPoints = roundPoints;
   ui.winner = winner;
   ui.nextStarter = nextStarter;
+  ui.revealedHands = revealedHands;
   render();
-  if (!winner) {
-    // The match just keeps going - no "play another round?" prompt.
-    scheduleRoundTransition(() => startRound(nextStarter));
-  }
+  // No auto-advance timer - round_over now waits for an explicit click
+  // (onContinueAfterRound) so results are never yanked away before you've
+  // seen them. The match still never asks "play another round?" once
+  // you've clicked past this - it only gates the reveal itself.
+}
+
+export function onContinueAfterRound(): void {
+  if (ui.phase !== "round_over" || ui.nextStarter === null) return;
+  scheduleRoundTransition(() => startRound(ui.nextStarter!));
 }
 
 function runAgentTurn(): void {

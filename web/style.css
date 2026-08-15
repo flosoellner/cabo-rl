@@ -98,6 +98,7 @@ body {
 }
 
 .card {
+  position: relative;
   width: 54px;
   height: 74px;
   border-radius: 8px;
@@ -109,6 +110,27 @@ body {
   font-size: 20px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* Always visible, on every card in every hand - which slot this is,
+   independent of whether the value is known. This is what a position
+   number in a log message ("the agent's position 3...") actually refers
+   to, so it needs to be checkable at a glance, not remembered. */
+.card-pos {
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.reveal-block {
+  margin-bottom: 8px;
+}
+
+.hand-row--reveal {
+  margin-bottom: 10px;
 }
 
 .card--clickable {

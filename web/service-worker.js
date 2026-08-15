@@ -1,7 +1,7 @@
 // Minimal offline app-shell cache for the Cabo PWA.
 // Cache-first: once installed, the app loads and plays with no network at all.
 // Bump CACHE_NAME on any deploy that changes shipped files so clients pick up the update.
-const CACHE_NAME = "cabo-shell-v1";
+const CACHE_NAME = "cabo-shell-v2";
 const SHELL_FILES = [
   "./",
   "./index.html",

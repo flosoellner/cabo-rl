@@ -7,12 +7,20 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function cardSlot(opts: { label: string; clickable: boolean; selected: boolean; action?: string; pos?: number }): string {
+function cardSlot(opts: {
+  label: string;
+  clickable: boolean;
+  selected: boolean;
+  action?: string;
+  pos?: number;
+  posLabel?: number; // always shown small, in every hand - which slot this is, independent of the card's value
+}): string {
   const classes = ["card"];
   if (opts.clickable) classes.push("card--clickable");
   if (opts.selected) classes.push("card--selected");
   const attrs = opts.clickable ? `data-action="${opts.action}" data-pos="${opts.pos}"` : "";
-  return `<div class="${classes.join(" ")}" ${attrs}>${esc(opts.label)}</div>`;
+  const posBadge = opts.posLabel !== undefined ? `<div class="card-pos">${opts.posLabel}</div>` : "";
+  return `<div class="${classes.join(" ")}" ${attrs}>${posBadge}${esc(opts.label)}</div>`;
 }
 
 function renderHands(): string {
@@ -32,6 +40,7 @@ function renderHands(): string {
         selected: false,
         action: "agent-card",
         pos: i,
+        posLabel: i + 1,
       })
     )
     .join("");
@@ -40,7 +49,7 @@ function renderHands(): string {
     .map((v, i) => {
       const label = human.selfKnown[i] ? String(v) : "?";
       const selected = ui.phase === "choose_discard_targets" && ui.selectedDiscardPositions.includes(i);
-      return cardSlot({ label, clickable: ownClickable, selected, action: "own-card", pos: i });
+      return cardSlot({ label, clickable: ownClickable, selected, action: "own-card", pos: i, posLabel: i + 1 });
     })
     .join("");
 
@@ -72,18 +81,37 @@ function renderHands(): string {
   `;
 }
 
+function renderRevealBlock(): string {
+  const revealed = ui.revealedHands!;
+  const sum = (hand: number[]) => hand.reduce((a, b) => a + b, 0);
+  const revealedRow = (hand: number[]) =>
+    `<div class="hand-row hand-row--reveal">${hand
+      .map((v, i) => cardSlot({ label: String(v), clickable: false, selected: false, posLabel: i + 1 }))
+      .join("")}</div>`;
+  return `
+    <div class="reveal-block">
+      <div class="hand-label">Your final hand (sum ${sum(revealed.human)})</div>
+      ${revealedRow(revealed.human)}
+      <div class="hand-label">Agent's final hand (sum ${sum(revealed.agent)})</div>
+      ${revealedRow(revealed.agent)}
+    </div>
+  `;
+}
+
 function renderActionPanel(): string {
   if (ui.phase === "round_over") {
     const rp = ui.roundPoints!;
     return `
-      <div class="panel-text">Round result -> You: +${rp.human} &nbsp; Agent: +${rp.agent}</div>
-      <div class="panel-text">Overall score -> You: ${state.players.human.totalScore} &nbsp; Agent: ${state.players.agent.totalScore}</div>
-      <div class="panel-text">Next round starting&hellip;</div>
+      ${renderRevealBlock()}
+      <div class="panel-text panel-text--big">Round result &rarr; You: +${rp.human} &nbsp; Agent: +${rp.agent}</div>
+      <div class="panel-text">Overall score &rarr; You: ${state.players.human.totalScore} &nbsp; Agent: ${state.players.agent.totalScore}</div>
+      <button data-action="continue-round">continue</button>
     `;
   }
   if (ui.phase === "game_over") {
     const youWon = ui.winner === "human";
     return `
+      ${renderRevealBlock()}
       <div class="panel-text panel-text--big">${youWon ? "You win!" : "The agent wins."}</div>
       <button data-action="new-game-after-loss">new game</button>
     `;
@@ -143,7 +171,7 @@ function render(): void {
         <div class="score-badge"><div class="score-label">agent</div><div class="score-value">${state.players.agent.totalScore}</div></div>
       </div>
       ${renderLog()}
-      ${renderHands()}
+      ${ui.phase === "round_over" || ui.phase === "game_over" ? "" : renderHands()}
       <div class="action-panel">${renderActionPanel()}</div>
     </div>
   `;
@@ -193,6 +221,9 @@ root.addEventListener("click", (e) => {
     case "new-game-after-loss":
       app.onNewGameAfterLoss();
       break;
+    case "continue-round":
+      app.onContinueAfterRound();
+      break;
     default:
       break;
   }
@@ -200,5 +231,7 @@ root.addEventListener("click", (e) => {
 
 app.setRenderer(render);
 app.setScheduler((fn) => setTimeout(fn, 550));
-app.setRoundTransitionScheduler((fn) => setTimeout(fn, 2200));
+// No delay here anymore - the round-over screen itself is the pause now
+// (it waits for a "continue" click), so there's nothing left to debounce.
+app.setRoundTransitionScheduler((fn) => fn());
 app.startNewGame();
